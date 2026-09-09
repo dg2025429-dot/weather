@@ -73,6 +73,29 @@ n_years = len(yearly)
 start_year = int(yearly["연도"].min())
 end_year = int(yearly["연도"].max())
 
+# 100년당 기온 상승 폭 (전체 기간)
+rate_100_full = slope * 100
+
+# 최근 20년만으로 구한 회귀 (비교용)
+RECENT_WINDOW = 20
+recent_yearly = yearly[yearly["연도"] >= end_year - (RECENT_WINDOW - 1)]
+
+has_recent = len(recent_yearly) >= 2
+if has_recent:
+    recent_years = recent_yearly["연도"].to_numpy(dtype=float)
+    recent_temps = recent_yearly["연평균기온"].to_numpy(dtype=float)
+    recent_slope, recent_intercept = np.polyfit(recent_years, recent_temps, 1)
+    recent_corr = float(np.corrcoef(recent_years, recent_temps)[0, 1])
+    recent_n = len(recent_yearly)
+    recent_start = int(recent_yearly["연도"].min())
+    recent_end = int(recent_yearly["연도"].max())
+    rate_100_recent = recent_slope * 100
+else:
+    recent_slope = recent_intercept = recent_corr = None
+    recent_n = len(recent_yearly)
+    recent_start = recent_end = None
+    rate_100_recent = None
+
 # ------------------------------------------------------------
 # 요약 지표
 # ------------------------------------------------------------
@@ -81,6 +104,51 @@ c1.metric("회귀선에 사용된 연도 수", f"{n_years}개")
 c2.metric("시작 연도", f"{start_year}년")
 c3.metric("끝 연도", f"{end_year}년")
 c4.metric("상관계수 (r)", f"{corr:.3f}")
+
+st.divider()
+
+# ------------------------------------------------------------
+# 100년당 상승폭 비교 (전체 기간 vs 최근 20년)
+# ------------------------------------------------------------
+st.subheader("100년당 기온 상승폭 비교")
+
+if has_recent:
+    recent_box = f"""
+        <div style="text-align:center; padding:20px; background-color:#fff4ec;
+                    border-radius:16px; border:2px solid #e4572e;">
+            <div style="font-size:16px; color:#555;">최근 {RECENT_WINDOW}년 ({recent_start}~{recent_end}년)</div>
+            <div style="font-size:52px; font-weight:800; color:#e4572e; line-height:1.2;">
+                {rate_100_recent:+.2f}°C
+            </div>
+            <div style="font-size:14px; color:#888;">/ 100년 · r = {recent_corr:.3f} (연도 {recent_n}개)</div>
+        </div>
+    """
+else:
+    recent_box = f"""
+        <div style="text-align:center; padding:20px; background-color:#fff4ec;
+                    border-radius:16px; border:2px solid #e4572e;">
+            <div style="font-size:16px; color:#555;">최근 {RECENT_WINDOW}년</div>
+            <div style="font-size:20px; color:#888; padding-top:16px;">데이터가 부족합니다</div>
+        </div>
+    """
+
+col_full, col_recent = st.columns(2)
+with col_full:
+    st.markdown(
+        f"""
+        <div style="text-align:center; padding:20px; background-color:#eef3fb;
+                    border-radius:16px; border:2px solid #1f77b4;">
+            <div style="font-size:16px; color:#555;">전체 기간 ({start_year}~{end_year}년)</div>
+            <div style="font-size:52px; font-weight:800; color:#1f77b4; line-height:1.2;">
+                {rate_100_full:+.2f}°C
+            </div>
+            <div style="font-size:14px; color:#888;">/ 100년 · r = {corr:.3f} (연도 {n_years}개)</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+with col_recent:
+    st.markdown(recent_box, unsafe_allow_html=True)
 
 st.divider()
 
@@ -97,7 +165,7 @@ st.markdown(
     f"""
     <div style="text-align:center; padding:24px; background-color:#f0f2f6;
                 border-radius:16px; margin-bottom:8px;">
-        <div style="font-size:20px; color:#555;">{selected_year}년 예상 평균기온</div>
+        <div style="font-size:20px; color:#555;">{selected_year}년 예상 평균기온 (전체 기간 회귀 기준)</div>
         <div style="font-size:72px; font-weight:800; color:#e4572e; line-height:1.2;">
             {predicted_temp:.2f}°C
         </div>
@@ -135,10 +203,21 @@ fig.add_trace(
         x=line_x,
         y=line_y,
         mode="lines",
-        name="회귀 직선",
-        line=dict(color="#e4572e", width=2),
+        name="회귀 직선 (전체 기간)",
+        line=dict(color="#1f77b4", width=2),
     )
 )
+if has_recent:
+    recent_line_y = recent_slope * line_x + recent_intercept
+    fig.add_trace(
+        go.Scatter(
+            x=line_x,
+            y=recent_line_y,
+            mode="lines",
+            name=f"회귀 직선 (최근 {RECENT_WINDOW}년)",
+            line=dict(color="#e4572e", width=2, dash="dash"),
+        )
+    )
 fig.add_trace(
     go.Scatter(
         x=[selected_year],
@@ -163,10 +242,20 @@ fig.update_layout(
 
 st.plotly_chart(fig, use_container_width=True)
 
+recent_caption = (
+    f" · 최근 {RECENT_WINDOW}년({recent_start}~{recent_end}) 회귀식: "
+    f"평균기온 = {recent_slope:.5f} × 연도 + {recent_intercept:.3f} "
+    f"(100년당 {rate_100_recent:+.2f}°C, r = {recent_corr:.3f})"
+    if has_recent
+    else " · 최근 20년 자료 부족으로 비교 회귀식 생략"
+)
+
 st.caption(
     f"※ 분석 대상: {start_year}년 ~ {end_year}년 (총 {n_years}개 연도, "
     f"연 관측일수 {MIN_OBS_DAYS}일 이상, {BASE_END_YEAR}년까지의 자료만 사용) · "
-    f"회귀식: 평균기온 = {slope:.5f} × 연도 + {intercept:.3f} · 상관계수 r = {corr:.3f}"
+    f"전체 기간 회귀식: 평균기온 = {slope:.5f} × 연도 + {intercept:.3f} "
+    f"(100년당 {rate_100_full:+.2f}°C, r = {corr:.3f})"
+    + recent_caption
 )
 
 with st.expander("연도별 집계 데이터 보기"):
